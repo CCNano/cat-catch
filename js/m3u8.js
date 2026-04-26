@@ -431,14 +431,13 @@ hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
         return;
     }
     function getNewUrl(item) {
-        const url = encodeURIComponent(item.uri ?? item.url);
-        const referer = requestHeaders.referer ? "&requestHeaders=" + encodeURIComponent(JSON.stringify(requestHeaders)) : "&initiator=" + (_initiator ? encodeURIComponent(_initiator) : "");
-        const title = _title ? encodeURIComponent(_title) : "";
-        const name = GetFile(item.uri ?? item.url);
-        let newUrl = `/m3u8.html?url=${url}${referer}`;
-        if (title) { newUrl += `&title=${title}`; }
-        if (tabId) { newUrl += `&tabid=${tabId}`; }
-        if (key) { newUrl += `&key=${key}`; }
+        const rawUrl = item.uri ?? item.url;
+        const name = GetFile(rawUrl);
+        const params = new URLSearchParams(window.location.search);
+        params.set('url', rawUrl);
+        params.delete('autoDown');
+        params.delete('ffmpeg');
+        const newUrl = `/m3u8.html?${params.toString()}`;
         return [name, newUrl];
     }
 });
@@ -1262,6 +1261,38 @@ $("#sendFfmpeg").click(function () {
     $("#StreamSaver").prop("checked", false);
     $("#mergeTs").click();
 });
+
+// 监听 正则过滤 回车
+$("#regular").keyup(function (event) {
+    if (event.key === "Enter") {
+        const list = document.querySelector("#mediaList");
+        const reg = new RegExp($("#regular").val());
+        list.querySelectorAll(".media-item").forEach((item, index) => {
+            if (reg.test(_fragments[index].url)) {
+                item.classList.add("selected");
+                _fragments[index].selected = true;
+            } else {
+                item.classList.remove("selected");
+                _fragments[index].selected = false;
+            }
+        });
+    }
+});
+
+// 反选
+$("#invertSelection").click(function () {
+    const list = document.querySelector("#mediaList");
+    list.querySelectorAll(".media-item").forEach((item, index) => {
+        if (item.classList.contains("selected")) {
+            item.classList.remove("selected");
+            _fragments[index].selected = false;
+        } else {
+            item.classList.add("selected");
+            _fragments[index].selected = true;
+        }
+    });
+});
+
 
 // 找到真密钥
 $("#searchingForRealKey").click(function () {
