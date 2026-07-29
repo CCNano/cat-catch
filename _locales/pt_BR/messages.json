@@ -1039,5 +1039,14 @@
   },
   "contextMenus": {
     "message": "Menu do botão direito"
+  },
+  "dataPreprocessing": {
+    "message": "Pré-processamento de Dados"	
+  },
+  "reverse": {
+    "message": "Ordem inversa"
+  },
+  "hideDownloadedSegments": {
+    "message": "Ocultar segmentos baixados"
   }
 }

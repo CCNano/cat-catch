@@ -3,17 +3,6 @@
     if (document.getElementById("catCatchRecorder")) { return; }
     const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
 
-    // let language = "en";
-    let language = navigator.language.replace("-", "_");
-    if (window.CatCatchI18n) {
-        if (!window.CatCatchI18n.languages.includes(language)) {
-            language = language.split("_")[0];
-            if (!window.CatCatchI18n.languages.includes(language)) {
-                language = "en";
-            }
-        }
-    }
-
     const buttonStyle = 'style="border:solid 1px #000;margin:2px;padding:2px;background:#fff;border-radius:4px;border:solid 1px #c7c7c780;color:#000;"';
     const checkboxStyle = 'style="-webkit-appearance: auto;"';
 
@@ -25,7 +14,7 @@
         <span data-i18n="selectVideo">选择视频</span> <select id="videoList" style="max-width: 200px;"></select>
         <span data-i18n="recordEncoding">录制编码</span> <select id="mimeTypeList" style="max-width: 200px;"></select>
         <label><input type="checkbox" id="ffmpeg" ${checkboxStyle}><span data-i18n="ffmpeg">使用ffmpeg转码</span></label>
-        <label><input type="checkbox" id="autoSave1"} ${checkboxStyle} data-i18n="save1hour">1小时保存一次</label>
+        <label><input type="checkbox" id="autoSave1"} ${checkboxStyle}><span data-i18n="save1hour">1小时保存一次</span></label>
         <label>
             <select id="videoBits">
                 <option value="2500000" data-i18n="videoBits">视频码率</option>
@@ -52,7 +41,7 @@
             <button id="start" ${buttonStyle} data-i18n="startRecording">开始录制</button>
             <button id="stop" ${buttonStyle} data-i18n="stopRecording">停止录制</button>
             <button id="hide" ${buttonStyle} data-i18n="hide">隐藏</button>
-            <!--button id="close" ${buttonStyle} data-i18n="close">关闭</button-->
+            <button id="close" ${buttonStyle} data-i18n="close">关闭</button>
         </div>
     </div>
     `;
@@ -140,11 +129,11 @@
         CatCatch.querySelector("#hide").click();
     });
 
-    // CatCatch.querySelector("#close").addEventListener('click', function (event) {
-    //     recorder?.state && recorder.stop();
-    //     CatCatch.style.display = "none";
-    //     window.postMessage({ action: "catCatchToBackground", Message: "script", script: "recorder.js", refresh: false });
-    // });
+    CatCatch.querySelector("#close").addEventListener('click', function (event) {
+        recorder?.state && recorder.stop();
+        CatCatch.style.display = "none";
+        window.postMessage({ action: "catCatchCloseScript", script: "recorder.js" });
+    });
 
     function init() {
         clearInterval(autoSave1Timer);
@@ -195,13 +184,27 @@
     setMimeType();
     // #endregion 视频编码选择
 
+    // 判断是否是真实的媒体元素，过滤掉一些没有实际内容的占位元素
+    const isRealMediaElement = (media) => {
+        return (media.src || media.currentSrc) ||               // 有地址
+            media.currentTime > 0 ||                          // 有播放进度
+            media.readyState >= 2 ||                          // 已经加载了部分数据
+            (media.videoWidth > 0 || media.videoHeight > 0) || // 有视频尺寸
+            media.networkState !== 3;                           // 网络状态不是 NETWORK_NO_SOURCE
+    }
+
     // #region 获取视频列表
     function getVideo() {
         videoList = [];
         $videoList.options.length = 0;
         document.querySelectorAll("video, audio").forEach(function (video, index) {
-            if (video.currentSrc) {
-                const src = video.currentSrc.split("/").pop();
+            if (isRealMediaElement(video)) {
+                const rawSrc = video.currentSrc || video.src || "";
+                const fileName = rawSrc
+                    .split(/[?#]/)[0]
+                    .split("/")
+                    .pop();
+                const src = fileName || `${i18n("video", "视频")}${index + 1}`;
                 videoList.push(video);
                 $videoList.options.add(new Option(src, index));
             }
@@ -353,16 +356,16 @@
     // #endregion 移动逻辑
 
     // i18n
-    if (window.CatCatchI18n) {
+    if (window.CatCatchI18n && CatCatch) {
         CatCatch.querySelectorAll('[data-i18n]').forEach(function (element) {
-            element.innerHTML = window.CatCatchI18n[element.dataset.i18n][language];
+            element.innerHTML = window.CatCatchI18n[element.dataset.i18n] || element.innerHTML;
         });
         CatCatch.querySelectorAll('[data-i18n-outer]').forEach(function (element) {
-            element.outerHTML = window.CatCatchI18n[element.dataset.i18nOuter][language];
+            element.outerHTML = window.CatCatchI18n[element.dataset.i18nOuter] || element.outerHTML;
         });
     }
     function i18n(key, original = "") {
-        if (!window.CatCatchI18n) { return original };
-        return window.CatCatchI18n[key][language];
+        if (!window.CatCatchI18n || !CatCatch) { return original };
+        return window.CatCatchI18n[key] || original;
     }
 })();

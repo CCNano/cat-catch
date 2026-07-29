@@ -519,7 +519,7 @@
     "message": "開啟下載目錄"
   },
   "downloadDir": {
-    "message": "打載目錄"
+    "message": "下載目錄"
   },
   "sendFfmpeg": {
     "message": "發送到線上ffmpeg"
@@ -1039,5 +1039,14 @@
   },
   "contextMenus": {
     "message": "右鍵菜單"
+  },
+  "dataPreprocessing": {
+    "message": "資料預處理"
+  },
+  "reverse": {
+    "message": "倒序排列"
+  },
+  "hideDownloadedSegments": {
+    "message": "隱藏下載成功的切片"
   }
 }

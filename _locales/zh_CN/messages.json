@@ -519,7 +519,7 @@
     "message": "打开下载目录"
   },
   "downloadDir": {
-    "message": "打载目录"
+    "message": "下载目录"
   },
   "sendFfmpeg": {
     "message": "发送到在线ffmpeg"
@@ -1039,5 +1039,14 @@
   },
   "contextMenus": {
     "message": "右键菜单"
+  },
+  "dataPreprocessing": {
+    "message": "数据预处理"
+  },
+  "reverse": {
+    "message": "倒序排列"
+  },
+  "hideDownloadedSegments": {
+    "message": "隐藏下载成功的切片"
   }
 }

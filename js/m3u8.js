@@ -9,9 +9,11 @@ let tsAddArg = params.get("tsAddArg");  // 自定义 切片参数
 let autoReferer = params.get("autoReferer");    // 是否已经自动调整 referer
 const tabId = parseInt(params.get("tabid"));    // 资源所在的标签页ID 用来获取密钥
 const key = params.get("key");  // 自定义密钥
+const _autoDown = params.get("autoDown");  //是否自动下载
 let autoDown = params.get("autoDown");  //是否自动下载
 const autoClose = params.get("autoClose");  // 下载完是否关闭页面
 let retryCount = parseInt(params.get("retryCount"));  // 重试次数
+const _getMpdId = parseInt(params.get("getMpdId"));  // 从mpd页面传入的 m3u8 解析
 
 const _isMaster = params.get("isMaster");   // 是否为主任务
 
@@ -59,11 +61,13 @@ setRequestHeaders(requestHeaders, () => {
     });
 });
 
+
 // 默认设置
 const allOption = {
     addParam: false,
     fold: !G.isMobile,
     m3u8dlRE: false,
+    M3u8HideDownloadedSegments: false,
 };
 /* m3u8 解析工具 */
 const hls = new Hls({
@@ -161,7 +165,7 @@ function init() {
     // 填充重试次数
     retryCount && $("#retryCount").val(retryCount);
 
-    if (isEmpty(_m3u8Url)) {
+    if (isEmpty(_m3u8Url) || _getMpdId) {
         $("#loading").hide(); $("#m3u8Custom").show();
 
         $("#uploadM3U8").change(function (event) {
@@ -187,48 +191,58 @@ function init() {
 
             if (m3u8Text == "") { return; }
 
-            // // 批量生成切片链接 解析range标签
+            // 批量生成切片链接 解析range标签
             if (m3u8Text.includes('${range:')) {
-                const rangePattern = /\$\{range:(\d+)-(\d+|\?),?(\d+)?\}/;
-                const match = m3u8Text.match(rangePattern);
-                if (!match) { return; }
-                const start = parseInt(match[1]);
-                let end = match[2];
-                const padding = match[3] ? parseInt(match[3]) : 0;
+                const rangePattern = /\$\{range:(\d+)-(\d+|\?),?(\d+)?\}/g;
+                const matches = [...m3u8Text.matchAll(rangePattern)];
+                if (!matches.length) return;
+
+                const tags = matches.map(m => ({
+                    start: parseInt(m[1]),
+                    end: m[2] === '?' ? Infinity : parseInt(m[2]),
+                    pad: m[3] ? parseInt(m[3]) : 0,
+                    isOpen: m[2] === '?'
+                }));
+
+                const hasOpen = tags.some(t => t.isOpen);
                 const urls = [];
+                const generatedSet = new Set();
+                let n = 0;
+                const maxUrls = 9999;
+
                 $("#m3u8Text").val(i18n.loadingData);
 
-                if (end === "?") {
-                    let i = start;
-                    while (true) {
-                        let number = i.toString();
-                        if (padding > 0) {
-                            number = number.padStart(padding, '0');
+                while (urls.length < maxUrls) {
+                    const values = tags.map(t => {
+                        if (t.isOpen) {
+                            return (t.start + n).toString().padStart(t.pad, '0');
+                        } else {
+                            const len = t.end - t.start + 1;
+                            return (t.start + (n % len)).toString().padStart(t.pad, '0');
                         }
-                        const url = m3u8Text.replace(rangePattern, number);
+                    });
+
+                    let idx = 0;
+                    const url = m3u8Text.replace(rangePattern, () => values[idx++]);
+
+                    if (generatedSet.has(url)) break;
+                    generatedSet.add(url);
+
+                    // 探查模式需要fetch验证
+                    if (hasOpen) {
                         try {
                             const response = await fetch(url, { method: 'HEAD' });
-                            if (!response.ok) {
-                                break;
-                            }
-                            urls.push(url);
-                        } catch (error) { break; }
-
-                        i++;
-                        // 防止死循环 最大9999个
-                        if (urls.length >= 9999) { break; }
-                    }
-                } else {
-                    end = parseInt(end);
-                    for (let i = start; i <= end; i++) {
-                        let number = i.toString();
-                        if (padding > 0) {
-                            number = number.padStart(padding, '0');
+                            if (!response.ok) break;
+                        } catch {
+                            break;
                         }
-                        urls.push(m3u8Text.replace(rangePattern, number));
                     }
+
+                    urls.push(url);
+                    n++;
                 }
-                if (urls && urls.length) {
+
+                if (urls.length) {
                     m3u8Text = urls.join("\n\n");
                     $("#m3u8Text").val(m3u8Text);
                 } else {
@@ -239,7 +253,8 @@ function init() {
             }
 
             // 只有一个链接 后缀为m3u8 直接解析
-            if (m3u8Text.split("\n").length == 1 && (GetExt(m3u8Text) == "m3u8" || GetExt(m3u8Text) == "txt")) {
+            const urlExt = GetExt(m3u8Text);
+            if (m3u8Text.split("\n").length == 1 && (urlExt == "m3u8" || urlExt == "m3u" || urlExt == "txt")) {
                 let url = "m3u8.html?url=" + encodeURIComponent(m3u8Text);
                 if (referer) {
                     if (referer.startsWith("http")) {
@@ -260,7 +275,7 @@ function init() {
                 m3u8Text += "#EXT-X-TARGETDURATION:233\n";
                 for (let ts of tsList) {
                     if (ts) {
-                        m3u8Text += "#EXTINF:1\n";
+                        m3u8Text += "#EXTINF:15\n";
                         m3u8Text += ts + "\n";
                     }
                 }
@@ -275,10 +290,10 @@ function init() {
             hls.loadSource(_m3u8Url);
             $("#m3u8Custom").hide();
         });
+
         // 从mpd解析器读取数据
-        const getId = parseInt(params.get("getId"));
-        if (getId) {
-            chrome.tabs.sendMessage(getId, "getM3u8", function (result) {
+        if (_getMpdId) {
+            chrome.tabs.sendMessage(_getMpdId, "getM3u8", function (result) {
                 $("#m3u8Text").val(result.m3u8Content);
                 $("#parse").click();
                 $("#info").html(result.mediaInfo);
@@ -322,6 +337,7 @@ channel.onmessage = (event) => {
 hls.on(Hls.Events.MANIFEST_LOADED, function (event, data) {
     $("#m3u8_url").attr("href", data.url).html(data.url);
 });
+
 
 // 监听 MANIFEST_PARSED m3u8解析完成
 hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
@@ -440,6 +456,12 @@ hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
         // $("button").hide();
         return;
     }
+
+    /**
+     * 跳转到新m3u8解析器
+     * @param {Object} item m3u8 url对象
+     * @returns 文件名和新链接 字符串数组
+     */
     function getNewUrl(item) {
         const rawUrl = item.uri ?? item.url;
         const name = GetFile(rawUrl);
@@ -507,17 +529,42 @@ hls.on(Hls.Events.LEVEL_LOADED, function (event, data) {
         }
     }
 
-    // map链接最后一部分
-    if (_fragments[0]?.initSegment?.url) {
-        let mapFileName = GetFileNameNoExt(_fragments[0].initSegment.url);
-        if (mapFileName != "NULL" && mapFileName.length != 0) {
-            $options.append(`<option value="${stringModify(mapFileName)}">${stringModify(mapFileName)}</option>`);
-        }
+    // 第一个ts链接文件名
+    let mapFileName = GetFileNameNoExt(_fragments[0].initSegment?.url ?? _fragments[0].url);
+    if (mapFileName != "NULL" && mapFileName.length != 0) {
+        $options.append(`<option value="${stringModify(mapFileName)}">${stringModify(mapFileName)}</option>`);
     }
 });
 
 // 监听 ERROR m3u8解析错误
 hls.on(Hls.Events.ERROR, function (event, data) {
+
+    /**
+     * 如果m3u8清单获取错误 尝试从缓存获取 解决部分网站一次性url问题
+     * 仅限于第一次加载m3u8文件时发生错误(使用hls.levels.length判断) 其他情况不处理
+     */
+    if (data.type == 'networkError' &&
+        data.details == "manifestLoadError" &&
+        data.url.startsWith("http") &&
+        data.response &&
+        // (data.response.code === 403 || data.response.code === 404) &&
+        tabId &&
+        tabId != -1 &&
+        !hls.levels.length) {
+        chrome.tabs.sendMessage(tabId, {
+            Message: "getM3u8Cache",
+            url: data.url
+        }, (response) => {
+            if (!response || !response.success || !response.data) { return; }
+            const baseUrl = data.url.substring(0, data.url.lastIndexOf("/") + 1);
+            const m3u8Text = addBashUrl(baseUrl, response.data);
+            const blobUrl = URL.createObjectURL(new Blob([new TextEncoder("utf-8").encode(m3u8Text)]));
+
+            hls.stopLoad();
+            hls.loadSource(blobUrl);
+        });
+    }
+
     autoDown && highlight();
     console.log(data);
     if (data.details == "bufferStalledError") {
@@ -745,7 +792,7 @@ function parseTs(data) {
         $("#recorder").show();
         $(".videoInfo #info").html(i18n.liveHLS);
     } else {
-        estimateSize(_fragments); // 估算文件大小
+        estimateFileInfo(_fragments, data.totalduration); // 估算文件大小
         $("#count").append(i18n("m3u8Info", [_fragments.length, secToTime(data.totalduration)]));
         $("#sendFfmpeg").show();
         $("#retryCount").parent().hide();
@@ -775,6 +822,16 @@ function parseTs(data) {
             });
         });
     }
+
+    /**
+     * 是否需要数据预处理。
+     * 判断是否非常见切片格式。否则勾选预处理。
+     */
+    if (!["ts", "mp4", "m4s", "aac", "ac3", "webm"].includes(GetExt(_fragments[0].url))) {
+        document.querySelector("#dataPreprocessing").checked = true;
+    }
+
+
     function showKeyInfo(buffer, decryptdata, i) {
         const $tips = $("#tips");
         $tips.append(`${i18n.keyAddress}: <input type="text" value="${decryptdata.uri}" spellcheck="false" readonly="readonly" class="keyUrl">`);
@@ -805,11 +862,12 @@ function parseTs(data) {
  * 估算整个视频大小
  * 获取几个切片大小 取平均值 * 切片数量
  * @param {Array} url ts对象数组
+ * @param {number} duration 视频总时长
  */
-async function estimateSize(fragments) {
+async function estimateFileInfo(fragments, duration) {
     if (!fragments || fragments.length === 0) return;
 
-    const samplesToCheck = Math.min(5, fragments.length);
+    const samplesToCheck = Math.min(10, fragments.length);
     let totalSize = 0;
     let successfulFetches = 0;
 
@@ -839,6 +897,8 @@ async function estimateSize(fragments) {
     if (successfulFetches > 0) {
         estimateFileSize = totalSize / successfulFetches * fragments.length;
         $("#estimateFileSize").append(` ${i18n.estimateSize}: ${byteToSize(estimateFileSize)}`);
+        const bitrate = (estimateFileSize * 8) / duration;
+        $("#estimateBitrate").append(` ${i18n.bitrate}: ${formatBitrate(bitrate)}`);
     }
 }
 /**************************** 监听 / 按钮绑定 ****************************/
@@ -1051,8 +1111,6 @@ $("#rangeStart, #rangeEnd, #thread").keyup(function () {
         return;
     }
 });
-
-
 
 // 储存设置
 $("#addParam").on("change", function () {
@@ -1339,6 +1397,12 @@ $("#invertSelection").click(function () {
     });
 });
 
+// 隐藏下载成功的切片
+$("#M3u8HideDownloadedSegments").click(function () {
+    allOption.M3u8HideDownloadedSegments = this.checked;
+    chrome.storage.local.set(allOption);
+});
+
 
 // 找到真密钥
 $("#searchingForRealKey").click(function () {
@@ -1391,6 +1455,7 @@ $("#searchingForRealKey").click(function () {
                 return true;
             }
         }
+        return false;
     }
     const decryptor = new AESDecryptor();
     fetch(_fragments[0].url)
@@ -1425,6 +1490,7 @@ $("#searchingForRealKey").click(function () {
         });
 });
 
+
 /**
  * 调用新下载器的方法
  * @param {number} start 下载范围 开始索引
@@ -1442,13 +1508,52 @@ function downloadNew(start = 0, end = _fragments.length) {
     // 过滤掉未选择的 _fragments
     const selectedFragments = recorder ? _fragments.slice(start) : _fragments.filter(fragment => fragment.selected);
     const down = new Downloader(selectedFragments, parseInt($("#thread").val()));
+    down.autoRetry = true;  // 开启自动重试
     $progress.html(`${down.success}/${down.total}`);
 
     // 储存切片所需 DOM 提高性能
     const itemDOM = new Map();
 
+    // 数据预处理 切片数据伪装PNG 剔除PNG数据
+    document.querySelector("#dataPreprocessing").checked && down.use(function (buffer, fragment) {
+        const view = new Uint8Array(buffer);
+        const len = view.length;
+        let tsStartIndex = -1;
+
+        if (len < 8) { return buffer; }
+
+        // 检测PNG
+        if (view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4E && view[3] === 0x47) {
+            // 找到PNG结束标志IEND
+            for (let i = 0; i < len - 4; i++) {
+                if (view[i] === 73 && view[i + 1] === 69 &&
+                    view[i + 2] === 78 && view[i + 3] === 68) {
+                    // IEND(4字节) + CRC(4字节) = 8字节
+                    tsStartIndex = i + 8;
+                    break;
+                }
+            }
+        }
+        // 检测JPG
+        else if (view[0] === 0xFF && view[1] === 0xD8 && view[2] === 0xFF) {
+            // 找到JPG结束标志FFD9
+            for (let i = 0; i < len - 2; i++) {
+                if (view[i] === 0xFF && view[i + 1] === 0xD9) {
+                    tsStartIndex = i + 2;
+                    break;
+                }
+            }
+        }
+        // 未找到头 或者 找不到结束标志 则返回原buffer
+        if (tsStartIndex === -1 || tsStartIndex >= len) {
+            return buffer;
+        }
+        // 返回切除图片头部后的buffer
+        return buffer.slice(tsStartIndex);
+    }, 'preprocess');
+
     // 解密函数
-    down.setDecrypt(function (buffer, fragment) {
+    down.use(function (buffer, fragment) {
         return new Promise(function (resolve, reject) {
             // 跳过解密 录制模式 切片不存在加密 跳过解密 直接返回
             if (skipDecrypt || recorder || !fragment.encrypted || !fragment.decryptdata) {
@@ -1482,7 +1587,7 @@ function downloadNew(start = 0, end = _fragments.length) {
             }
             resolve(buffer);
         });
-    });
+    }, 'decrypt');
     // 转码函数 如果存在down.mapTag 跳过转码
     if (downSet.mp4 && !down.mapTag) {
         let tempBuffer = null;
@@ -1499,12 +1604,12 @@ function downloadNew(start = 0, end = _fragments.length) {
             }
             tempBuffer = segment.data;
         });
-        down.setTranscode(async function (buffer, fragment) {
+        down.use(async function (buffer, fragment) {
             head = fragment.index == 0;
             transmuxer.push(new Uint8Array(buffer));
             transmuxer.flush();
             return tempBuffer ? tempBuffer.buffer : buffer;
-        });
+        }, 'transcode');
     }
     // 下载错误
     down.on('downloadError', function (fragment, error) {
@@ -1516,6 +1621,7 @@ function downloadNew(start = 0, end = _fragments.length) {
         item.retryBtn.style.display = "inline";
         item.stopBtn.style.display = "none";
         item.root.scrollIntoView({ behavior: "smooth", block: "center" });
+        item.status = 3; // 下载失败
 
     });
     // 切片下载完成
@@ -1528,14 +1634,19 @@ function downloadNew(start = 0, end = _fragments.length) {
         }
 
         const item = itemDOM.get(fragment.index);
-        item.root.style.setProperty("--progress", "100%");
+        item.root.style.setProperty("--m3u8-progress", "100%");
         item.stopBtn.style.display = "none";
         item.retryBtn.style.display = "none";
         item.copyBtn.style.display = "inline";
+        item.status = 2; // 下载完成
 
         $progress.html(`${down.success}/${down.total}`);
         $fileSize.html(i18n.downloaded + ":" + byteToSize(down.buffersize));
         $fileDuration.html(i18n.downloadedVideoLength + ":" + secToTime(down.duration));
+
+        if (allOption.M3u8HideDownloadedSegments) {
+            item.root.style.display = "none";
+        }
     });
     // 全部下载完成
     down.on('allCompleted', async function (buffer) {
@@ -1560,7 +1671,7 @@ function downloadNew(start = 0, end = _fragments.length) {
     let lastEmitted = Date.now();
     down.on('itemProgress', function (fragment, state, receivedLength, contentLength) {
         if (Date.now() - lastEmitted >= 233) {
-            itemDOM.get(fragment.index).root.style.setProperty("--progress", (receivedLength / contentLength * 100).toFixed(2) + "%");
+            itemDOM.get(fragment.index).root.style.setProperty("--m3u8-progress", (receivedLength / contentLength * 100).toFixed(2) + "%");
             lastEmitted = Date.now();
         }
     });
@@ -1571,6 +1682,10 @@ function downloadNew(start = 0, end = _fragments.length) {
     }
     down.on('error', function (error) {
         console.log(error);
+    });
+    down.on('start', function (fragment, options) {
+        const item = itemDOM.get(fragment.index);
+        item.status = 1; // 下载中
     });
     down.on('stop', function (fragment, error) {
         console.log(error);
@@ -1618,7 +1733,8 @@ function downloadNew(start = 0, end = _fragments.length) {
             root: document.querySelector(`#media-item-${fragment.sn}`),
             stopBtn: stopBtn,
             retryBtn: retryBtn,
-            copyBtn: copyBtn
+            copyBtn: copyBtn,
+            status: 0,  // 0:未下载 1:下载中 2:下载完成 3:下载失败
         });
     });
 
@@ -1626,12 +1742,12 @@ function downloadNew(start = 0, end = _fragments.length) {
     down.start();
 
     // 强制下载
-    $("#ForceDownload").off("click").click(function () {
+    $("#ForceDownload").off().click(function () {
         mergeTsNew(down);
     });
 
     // 重新下载
-    $("#errorDownload").off("click").click(function () {
+    $("#errorDownload").off().click(function () {
         down.errorItem.forEach(function (fragment, index) {
             setTimeout(() => {
                 itemDOM.get(fragment.index)?.retryBtn.click();
@@ -1640,7 +1756,7 @@ function downloadNew(start = 0, end = _fragments.length) {
     });
 
     // 停止下载
-    $("#stopDownload").off("click").click(function () {
+    $("#stopDownload").off().click(function () {
         down.stop();
         setTimeout(() => {
             fileStream && fileStream.close();
@@ -1651,6 +1767,17 @@ function downloadNew(start = 0, end = _fragments.length) {
             $fileDuration.html("");
             initDownload();
         }, 1000);
+    });
+
+    // 隐藏下载成功的切片
+    $("#M3u8HideDownloadedSegments").off().click(function () {
+        itemDOM.forEach((item) => {
+            if (item.status == 2) {
+                item.root.style.display = this.checked ? "none" : "flex";
+            }
+        });
+        allOption.M3u8HideDownloadedSegments = this.checked;
+        chrome.storage.local.set(allOption);
     });
 }
 function addInitSegmentData(buffer, initSegment) {
@@ -1670,14 +1797,14 @@ function mergeTsNew(down) {
     $progress.html(i18n.merging);
 
     // 创建Blob
-    const fileBlob = new Blob(down.buffer, { type: down.transcode ? "video/mp4" : "video/MP2T" });
+    const fileBlob = new Blob(down.buffer, { type: down.findPipeline('transcode') ? "video/mp4" : "video/MP2T" });
 
     // 默认后缀
     let ext = (down.mapTag && !down.mapTag.startsWith("data:") ? down.mapTag : down.fragments[0].url).split("/").pop();
     ext = ext.split("?").shift();
     ext = ext.split(".").pop();
     ext = ext ? ext : "ts";
-    ext = down.transcode ? "mp4" : ext;
+    ext = down.findPipeline('transcode') ? "mp4" : ext;
 
     let fileName = "";
     const customFilename = $('#customFilename').val().trim();
@@ -1814,7 +1941,7 @@ function initDownload() {
     // 恢复切片UI状态
     const list = document.querySelector("#mediaList");
     list.querySelectorAll(".media-item").forEach((item, index) => {
-        item.style.setProperty("--progress", "0%");
+        item.style.setProperty("--m3u8-progress", "0%");
         item.classList.remove("error");
         item.querySelector(".copy").style.display = "inline";
         item.querySelector(".stop")?.remove();
@@ -1950,7 +2077,7 @@ function timeToIndex(time) {
 function writeText(text) {
     if (!Array.isArray(text)) return;
     document.querySelector("#mediaList").innerHTML = text.map((data, index) => `
-        <div class="media-item selected" data-index="${index}" id="media-item-${data.sn}">
+        <div class="media-item selected" data-index="${index}" data-number="${index + 1}" id="media-item-${data.sn}">
             <span class="url-text" title="${data.url}">${data.url}</span>
             <span class="media-tip"></span>
             <img class="icon copy" src="img/copy.png"/>
@@ -2187,13 +2314,15 @@ function autoMerge() {
 function createIframeFFmpeg(fileData) {
     if (!iframeFFmpeg) {
         iframeFFmpeg = document.createElement('iframe');
+        iframeFFmpeg.allow = "fullscreen";
         document.querySelector("#iframeBox").appendChild(iframeFFmpeg);
         iframeFFmpeg.onload = function () {
             iframeFFmpegReady = true;
             fileData && iframeFFmpeg.contentWindow.postMessage(fileData, '*');
             $progress.html(i18n.sendFfmpeg);
         };
-        iframeFFmpeg.src = G.ffmpegConfig.url + '?_=' + new Date().getTime();
+        // iframeFFmpeg.src = G.ffmpegConfig.url + '?_=' + new Date().getTime();
+        iframeFFmpeg.src = G.ffmpegConfig.url + '?_=iframe';
     } else if (iframeFFmpegReady) {
         fileData && iframeFFmpeg.contentWindow.postMessage(fileData, '*');
         $progress.html(i18n.sendFfmpeg);

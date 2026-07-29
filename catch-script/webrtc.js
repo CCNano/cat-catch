@@ -2,17 +2,6 @@
     console.log("webrtc.js Start");
     if (document.getElementById("catCatchWebRTC")) { return; }
 
-    // 多语言
-    let language = navigator.language.replace("-", "_");
-    if (window.CatCatchI18n) {
-        if (!window.CatCatchI18n.languages.includes(language)) {
-            language = language.split("_")[0];
-            if (!window.CatCatchI18n.languages.includes(language)) {
-                language = "en";
-            }
-        }
-    }
-
     const buttonStyle = 'style="border:solid 1px #000;margin:2px;padding:2px;background:#fff;border-radius:4px;border:solid 1px #c7c7c780;color:#000;"';
     const checkboxStyle = 'style="-webkit-appearance: auto;"';
     const CatCatch = document.createElement("div");
@@ -29,7 +18,7 @@
                 <option value="-1">${i18n("selectAudio", "选择音频")}</option>
             </select>
         ${i18n("recordEncoding", "录制编码")}: <select id="mimeTypeList" style="max-width: 200px;"></select>
-        <label><input type="checkbox" id="autoSave1"} ${checkboxStyle} data-i18n="save1hour">1小时保存一次</label>
+        <label><input type="checkbox" id="autoSave1"} ${checkboxStyle} ><span data-i18n="save1hour">1小时保存一次</span></label>
         <label>
             <select id="videoBits">
                 <option value="2500000" data-i18n="videoBits">视频码率</option>
@@ -49,7 +38,7 @@
             <button id="stop" ${buttonStyle} data-i18n="stopRecording">停止录制</button>
             <button id="save" ${buttonStyle} data-i18n="save">保存</button>
             <button id="hide" ${buttonStyle} data-i18n="hide">隐藏</button>
-            <!--button id="close" ${buttonStyle} data-i18n="close">关闭</button-->
+            <button id="close" ${buttonStyle} data-i18n="close">关闭</button>
         </div>
     </div>
     `;
@@ -96,11 +85,11 @@
     $stop.style.display = 'none';
 
     // 关闭
-    // CatCatch.querySelector("#close").addEventListener('click', function (event) {
-    //     recorder?.state && recorder.stop();
-    //     CatCatch.style.display = "none";
-    //     window.postMessage({ action: "catCatchToBackground", Message: "script", script: "webrtc.js", refresh: true });
-    // });
+    CatCatch.querySelector("#close").addEventListener('click', function (event) {
+        recorder?.state && recorder.stop();
+        CatCatch.style.display = "none";
+        window.postMessage({ action: "catCatchCloseScript", script: "webrtc.js" });
+    });
 
     // 隐藏
     CatCatch.querySelector("#hide").addEventListener('click', function (event) {
@@ -319,16 +308,16 @@
     });
 
     // i18n
-    if (window.CatCatchI18n) {
+    if (window.CatCatchI18n && CatCatch) {
         CatCatch.querySelectorAll('[data-i18n]').forEach(function (element) {
-            element.innerHTML = window.CatCatchI18n[element.dataset.i18n][language];
+            element.innerHTML = window.CatCatchI18n[element.dataset.i18n] || element.innerHTML;
         });
         CatCatch.querySelectorAll('[data-i18n-outer]').forEach(function (element) {
-            element.outerHTML = window.CatCatchI18n[element.dataset.i18nOuter][language];
+            element.outerHTML = window.CatCatchI18n[element.dataset.i18nOuter] || element.outerHTML;
         });
     }
     function i18n(key, original = "") {
-        if (!window.CatCatchI18n) { return original };
-        return window.CatCatchI18n[key][language];
+        if (!window.CatCatchI18n || !CatCatch) { return original };
+        return window.CatCatchI18n[key] || original;
     }
 })();

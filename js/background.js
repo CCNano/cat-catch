@@ -1,4 +1,11 @@
-importScripts("/js/function.js", "/js/init.js");
+/**
+ * chrome 使用v3 background.service_worker 加载模式
+ * firefox 使用v2 background.scripts 加载模式
+ * firefox 在 manifest 文件中已经加载以下脚本，如果已经加载 G 变量存在，不再加载。
+ */
+if (typeof G === 'undefined') {
+    importScripts("/js/polyfill.js", "/js/function.js", "/js/templates.js", "/js/init.js");
+}
 
 // Service Worker 5分钟后会强制终止扩展
 // https://bugs.chromium.org/p/chromium/issues/detail?id=1271154
@@ -18,6 +25,18 @@ chrome.runtime.onConnect.addListener(function (Port) {
         if (chrome.runtime.lastError) { return; }
     });
 });
+setInterval(chrome.runtime.getPlatformInfo, 25 * 1000);
+
+// 全局变量
+let debounce = undefined;
+let debounceCount = 0;
+let debounceTime = 0;
+const reFilename = /filename="?([^"]+)"?/;
+
+G.deepSearchTemporarilyClose = null; // 深度搜索临时变量
+G.urlMap = new Map();   // url查重map
+G.requestHeaders = new Map();   // 临时储存请求头
+G.blackList = new Set();    // 正则屏蔽资源列表
 
 /**
  *  定时任务
@@ -545,6 +564,19 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         sendResponse(G.damnUrlSet.has(Message.tabId));
         return true;
     }
+    if (Message.Message == "closeScript") {
+        if (!Message.script || !G.scriptList.has(Message.script)) {
+            sendResponse("error");
+            return false;
+        }
+        const script = G.scriptList.get(Message.script);
+        const scriptTabid = script.tabId;
+        if (scriptTabid.has(Message.tabId)) {
+            scriptTabid.delete(Message.tabId);
+        }
+        sendResponse("ok");
+        return true;
+    }
 });
 
 // 选定标签 更新G.tabId
@@ -576,7 +608,7 @@ chrome.windows.onFocusChanged.addListener(function (activeInfo) {
             G.tabId = -1;
         }
     });
-}, { filters: ["normal"] });
+});
 
 /**
  * 监听 标签页面更新
@@ -650,7 +682,7 @@ chrome.webNavigation.onCommitted.addListener(function (details) {
     // chrome内核版本 102 以下不支持 chrome.scripting.executeScript API
     if (G.version < 102) { return; }
 
-    if (G.deepSearch && G.deepSearchTemporarilyClose != details.tabId) {
+    if (!G.blockUrlSet.has(details.tabId) && G.deepSearch && G.deepSearchTemporarilyClose != details.tabId) {
         G.scriptList.get("search.js").tabId.add(details.tabId);
         G.deepSearchTemporarilyClose = null;
     }
@@ -961,7 +993,99 @@ function isSpecialPage(url) {
     return !(url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:"));
 }
 
+/**
+ * 清理冗余数据
+ */
+function clearRedundant() {
+    chrome.tabs.query({}, function (tabs) {
+        const allTabId = new Set(tabs.map(tab => tab.id));
+
+        if (!cacheData.init) {
+            // 清理 缓存数据
+            let cacheDataFlag = false;
+            for (let key in cacheData) {
+                if (!allTabId.has(Number(key))) {
+                    cacheDataFlag = true;
+                    delete cacheData[key];
+                }
+            }
+            cacheDataFlag && (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
+        }
+
+        // 清理
+        G.urlMap.forEach((_, key) => {
+            !allTabId.has(key) && G.urlMap.delete(key);
+        });
+
+        // 清理脚本
+        G.scriptList.forEach(function (scriptList) {
+            scriptList.tabId.forEach(function (tabId) {
+                if (!allTabId.has(tabId)) {
+                    scriptList.tabId.delete(tabId);
+                }
+            });
+        });
+
+        if (!G.initLocalComplete) { return; }
+
+        // 清理 declarativeNetRequest 模拟手机
+        chrome.declarativeNetRequest.getSessionRules(function (rules) {
+            let mobileFlag = false;
+            for (let item of rules) {
+                if (item.condition.tabIds) {
+                    // 如果tabIds列表都不存在 则删除该条规则
+                    if (!item.condition.tabIds.some(id => allTabId.has(id))) {
+                        mobileFlag = true;
+                        item.condition.tabIds.forEach(id => G.featMobileTabId.delete(id));
+                        chrome.declarativeNetRequest.updateSessionRules({
+                            removeRuleIds: [item.id]
+                        });
+                    }
+                } else if (item.id == 1) {
+                    // 清理预览视频增加的请求头
+                    chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [1] });
+                }
+            }
+            mobileFlag && (chrome.storage.session ?? chrome.storage.local).set({ featMobileTabId: Array.from(G.featMobileTabId) });
+        });
+        // 清理自动下载
+        let autoDownFlag = false;
+        G.featAutoDownTabId.forEach(function (tabId) {
+            if (!allTabId.has(tabId)) {
+                autoDownFlag = true;
+                G.featAutoDownTabId.delete(tabId);
+            }
+        });
+        autoDownFlag && (chrome.storage.session ?? chrome.storage.local).set({ featAutoDownTabId: Array.from(G.featAutoDownTabId) });
+
+        G.blockUrlSet = new Set([...G.blockUrlSet].filter(x => allTabId.has(x)));
+        G.damnUrlSet = new Set([...G.damnUrlSet].filter(x => allTabId.has(x)));
+
+        if (G.requestHeaders.size >= 10240) {
+            G.requestHeaders.clear();
+        }
+    });
+}
+
+// 扩展升级，清空本地储存
+chrome.runtime.onInstalled.addListener(function (details) {
+    if (details.reason == "update") {
+        chrome.storage.local.clear(function () {
+            if (chrome.storage.session) {
+                chrome.storage.session.clear(InitOptions);
+            } else {
+                InitOptions();
+            }
+        });
+        chrome.alarms.create("nowClear", { when: Date.now() + 3000 });
+    }
+    if (details.reason == "install") {
+        chrome.tabs.create({ url: "install.html" });
+    }
+});
+
 // 测试
-// chrome.storage.local.get(function (data) { console.log(data.MediaData) });
-// chrome.declarativeNetRequest.getSessionRules(function (rules) { console.log(rules); });
-// chrome.tabs.query({}, function (tabs) { for (let item of tabs) { console.log(item.id); } });
+// chrome.storage.local.get(function (data) { console.log("storageLocal", data.MediaData) });
+// chrome.storage.session.get(function (data) { console.log("storageSession", data.MediaData) });
+// chrome.declarativeNetRequest.getSessionRules(function (rules) { console.log("sessionRules", rules); });
+// chrome.tabs.query({}, function (tabs) { for (let item of tabs) { console.log("tabId", item.id); } });

@@ -31,7 +31,22 @@
 
     // Worker
     const _Worker = Worker;
+    // 检测是否能够正常加载 Blob URL 的 Worker
+    let supportsBlobWorker = true;
+    try {
+        const testBlob = new Blob([''], { type: 'text/javascript' });
+        const testUrl = URL.createObjectURL(testBlob);
+        const testWorker = new _Worker(testUrl);
+        testWorker.addEventListener("error", function () {
+            testWorker.terminate();
+            URL.revokeObjectURL(testUrl);
+            supportsBlobWorker = false;
+        });
+    } catch (e) {
+        supportsBlobWorker = false;
+    }
     self.Worker = function (scriptURL, options) {
+        if (!supportsBlobWorker) { return new _Worker(scriptURL, options); }
         try {
             const xhr = new XMLHttpRequest();
             xhr.open('GET', scriptURL, false);
@@ -68,7 +83,7 @@
 
     async function findMedia(data, depth = 0) {
         CATCH_SEARCH_DEBUG && console.log(data);
-        let index = 0;
+        // let index = 0;
         if (!data) { return; }
         if (data instanceof Array && data.length == 16) {
             const isKey = data.every(function (value) {
@@ -84,7 +99,7 @@
             return;
         }
         for (let key in data) {
-            if (index != 0) { depth = 0; } index++;
+            // if (index != 0) { depth = 0; } index++;
             if (typeof data[key] == "object") {
                 // 查找疑似key
                 if (data[key] instanceof Array && data[key].length == 16) {
@@ -94,8 +109,10 @@
                     isKey && postData({ action: "catCatchAddKey", key: data[key], href: location.href, ext: "key" });
                     continue;
                 }
-                if (depth > 10) { continue; }  // 防止死循环 最大深度
-                findMedia(data[key], depth + 1);
+                // 防止死循环 最大深度
+                if (depth <= 20) {
+                    findMedia(data[key], depth + 1);
+                }
                 continue;
             }
             if (typeof data[key] == "string") {
@@ -652,6 +669,12 @@
     }
     function toUrl(text, ext = "m3u8") {
         if (!text) { return; }
+        if (ext == 'mpd') {
+            let url = URL.createObjectURL(new Blob([new TextEncoder("utf-8").encode(text)]));
+            postData({ action: "catCatchAddMedia", url: url, href: location.href, ext: ext });
+            return;
+        }
+
         // 处理ts地址无protocol
         text = TsProtocol(text);
         if (isFullM3u8(text)) {
