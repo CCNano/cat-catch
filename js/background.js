@@ -106,9 +106,14 @@ function findMedia(data, isRegex = false, filter = false, timer = false) {
         return;
     }
 
-    // 检查 是否启用 是否在当前标签是否在屏蔽列表中
+    /**
+     * 以下情况不处理
+     * 是否全局启用
+     * 当前标签是否在屏蔽列表中
+     * OPTIONS 请求不处理
+     */
     const blockUrlFlag = data.tabId && data.tabId > 0 && G.blockUrlSet.has(data.tabId);
-    if (!G.enable || (G.blockUrlWhite ? !blockUrlFlag : blockUrlFlag)) {
+    if (!G.enable || (G.blockUrlWhite ? !blockUrlFlag : blockUrlFlag) || data?.method == "OPTIONS") {
         return;
     }
 
@@ -579,6 +584,24 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     }
 });
 
+/**
+ * 监听 外部扩展 message 事件
+ */
+chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => {
+    if (request.action === "getData") {
+        if (request.tabId) {
+            sendResponse(cacheData[request.tabId] ?? null);
+            return true;
+        }
+        sendResponse(cacheData);
+        return true;
+    } else if (request.action === "getCurrentTabData") {
+        const tabId = request.tabId ?? G.tabId;
+        sendResponse(cacheData[tabId] ?? null);
+        return true;
+    }
+});
+
 // 选定标签 更新G.tabId
 // chrome.tabs.onHighlighted.addListener(function (activeInfo) {
 //     if (activeInfo.windowId == -1 || !activeInfo.tabIds || !activeInfo.tabIds.length) { return; }
@@ -924,25 +947,38 @@ function getResponseHeadersValue(data) {
  * @param {Object} data 
  * @returns {Object|Boolean}
  */
+const DIRECT_INCLUDE_HEADERS = new Set([
+    "referer",
+    "origin",
+    "cookie",
+    "authorization",
+    "auth",
+    "token",
+    "key",
+    "access-token",
+    "api-key",
+    "app-token",
+    "authtoken",
+    "session-id"
+]);
+const X_AUTH_KEYWORD_REG = /(auth|token|sign|key|ticket|session)/;
 function getRequestHeaders(data) {
-    if (data.allRequestHeaders == undefined || data.allRequestHeaders.length == 0) { return false; }
+    if (!data?.allRequestHeaders?.length) {
+        return false;
+    }
     const header = {};
     for (let item of data.allRequestHeaders) {
-        item.name = item.name.toLowerCase();
-        if (item.name == "referer") {
-            header.referer = item.value;
-        } else if (item.name == "origin") {
-            header.origin = item.value;
-        } else if (item.name == "cookie") {
-            header.cookie = item.value;
-        } else if (item.name == "authorization") {
-            header.authorization = item.value;
+        if (!item.name || !item.value) continue;
+        const lowerName = item.name.toLowerCase();
+        if (DIRECT_INCLUDE_HEADERS.has(lowerName)) {
+            header[lowerName] = item.value;
+            continue;
+        }
+        if (lowerName.startsWith("x-") && X_AUTH_KEYWORD_REG.test(lowerName)) {
+            header[lowerName] = item.value;
         }
     }
-    if (Object.keys(header).length) {
-        return header;
-    }
-    return false;
+    return Object.keys(header).length > 0 ? header : false;
 }
 //设置扩展图标
 function SetIcon(obj) {
