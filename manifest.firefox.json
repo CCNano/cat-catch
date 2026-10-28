@@ -36,6 +36,9 @@
     "declarativeNetRequest",
     "contextMenus"
   ],
+  "optional_permissions": [
+    "clipboardRead"
+  ],
   "commands": {
     "_execute_browser_action": {},
     "enable": {
@@ -90,5 +93,5 @@
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "default_locale": "en",
-  "version": "2.7.2"
+  "version": "2.7.4"
 }
