@@ -378,9 +378,10 @@ function AddMedia(data, currentTab = true) {
     return false;
   });
   //播放
-  data.html.find('#play').click(async function () {
-    await getClipboardText(data);
+  data.html.find('#play').click(async function (event) {
     if (isEmpty(G.Player)) { return true; }
+    event.stopPropagation();
+    await getClipboardText(data);
     if (G.Player == "$shareApi$" || G.Player == "${shareApi}") {
       navigator.share({ url: data.url });
       return false;
@@ -771,6 +772,10 @@ $("[go]").click(function () {
   let url = this.getAttribute("go");
   if (url == "ffmpegURL") {
     chrome.tabs.create({ url: G.ffmpegConfig.url })
+    return;
+  }
+  if (url == "documentationURL") {
+    chrome.tabs.create({ url: G.documentationURL.url })
     return;
   }
   chrome.tabs.create({ url: url });
